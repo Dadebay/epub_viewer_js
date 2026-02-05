@@ -277,26 +277,35 @@ class EpubController {
   ///Gets page information (current page and total pages)
   Future<Map<String, int>> getPageInfo() async {
     checkEpubLoaded();
-    print('🔍 epub_controller: getPageInfo() çağrılıyor...');
-
     final result = await webViewController?.evaluateJavascript(
       source: 'getPageInfo()',
     );
-
-    print('🔍 epub_controller: JavaScript sonucu: $result');
-    print('🔍 epub_controller: Result type: ${result.runtimeType}');
 
     if (result != null && result is Map) {
       final pageInfo = {
         'currentPage': (result['currentPage'] as num?)?.toInt() ?? 1,
         'totalPages': (result['totalPages'] as num?)?.toInt() ?? 1,
       };
-      print('🔍 epub_controller: Döndürülen sayfa bilgisi: $pageInfo');
       return pageInfo;
     }
 
-    print('⚠️ epub_controller: Result null veya Map değil, varsayılan değer dönüyor');
     return {'currentPage': 1, 'totalPages': 1};
+  }
+
+  ///Gets the page number for a given CFI or href
+  Future<int?> getPageFromCfi(String cfi) async {
+    checkEpubLoaded();
+    try {
+      final result = await webViewController?.evaluateJavascript(
+        source: 'getPageFromCfi("$cfi")',
+      );
+
+      if (result != null && result is num) {
+        return result.toInt();
+      }
+    } catch (e) {}
+
+    return null;
   }
 
   checkEpubLoaded() {

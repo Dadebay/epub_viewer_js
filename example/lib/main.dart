@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:example/global_safe_area_wrapper.dart';
+import 'package:example/reader_theme_model.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:example/chapter_drawer.dart';
 import 'package:example/theme_settings_sheet.dart';
@@ -20,6 +21,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Flutter Demo',
+      debugShowCheckedModeBanner: false,
       builder: (context, child) {
         return GlobalSafeAreaWrapper(
           top: false,
@@ -46,25 +48,22 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  int currentFontSize = 12;
+  int currentPage = 1;
+  ReaderThemeModel currentTheme = ReaderThemeModel.lightThemes.first;
   final epubController = EpubController();
-
-  var textSelectionCfi = '';
-
   bool isLoading = true;
   bool isLoadingPages = true;
-
   double progress = 0.0;
-
-  EpubTheme currentTheme = EpubTheme.sepia();
-  int currentFontSize = 18;
-
-  int currentPage = 1;
+  var textSelectionCfi = '';
   int totalPages = 1;
 
-  EpubSource? _epubSource;
-  String _titleText = 'EPUB Kitap Okuyucu';
-  String? _initialCfi;
+  String? _currentCfi;
   Key _epubKey = UniqueKey();
+  EpubSource? _epubSource;
+  String? _initialCfi;
+  bool _showControls = true;
+  String _titleText = 'EPUB Kitap Okuyucu';
 
   Future<void> _pickAndOpenEpub() async {
     final result = await FilePicker.platform.pickFiles(
@@ -122,7 +121,7 @@ class _MyHomePageState extends State<MyHomePage> {
           setState(() {
             currentTheme = theme;
           });
-          epubController.updateTheme(theme: theme);
+          epubController.updateTheme(theme: theme.epubTheme);
         },
         onFontSizeChanged: (size) {
           setState(() {
@@ -150,6 +149,29 @@ class _MyHomePageState extends State<MyHomePage> {
       print('✅ State güncellendi - currentPage: $currentPage, totalPages: $totalPages');
     } catch (e) {
       print('❌ Error getting page info: $e');
+    }
+  }
+
+  Future<void> _goToNextPage() async {
+    if (currentPage < totalPages) {
+      // await epubController.nextPage();
+      await _updatePageInfo();
+    }
+  }
+
+  Future<void> _goToPreviousPage() async {
+    if (currentPage > 1) {
+      // await epubController.previousPage();
+      await _updatePageInfo();
+    }
+  }
+
+  Future<void> _jumpToPage(int page) async {
+    if (page >= 1 && page <= totalPages && page != currentPage) {
+      // Calculate progress based on page
+      double targetProgress = (page - 1) / (totalPages - 1);
+      // await epubController.gotoProgress(targetProgress);
+      await _updatePageInfo();
     }
   }
 
@@ -257,45 +279,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
     // Show the epub reader when a book is selected
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () {
-            setState(() {
-              _epubSource = null;
-              _titleText = 'EPUB Kitap Okuyucu';
-              _initialCfi = null;
-              isLoading = true;
-              isLoadingPages = true;
-              progress = 0.0;
-              currentPage = 1;
-              totalPages = 1;
-            });
-          },
-          tooltip: 'Geri dön',
-        ),
-        title: Text(
-          _titleText,
-          style: const TextStyle(color: Colors.grey, fontSize: 14),
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.folder_open, color: Colors.black),
-            onPressed: _pickAndOpenEpub,
-            tooltip: 'Cihazdan EPUB seç',
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert, color: Colors.black),
-            onPressed: _showMenu,
-          ),
-        ],
-      ),
-      body: Column(
+      backgroundColor: Colors.white,
+      body: Stack(
         children: [
-          Expanded(
+          // Main EPUB Viewer - full screen
+          Positioned.fill(
             child: Stack(
               children: [
                 EpubViewer(
@@ -304,7 +292,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   epubSource: _epubSource!,
                   epubController: epubController,
                   displaySettings:
-                      EpubDisplaySettings(flow: EpubFlow.paginated, useSnapAnimationAndroid: false, snap: true, theme: currentTheme, fontSize: currentFontSize, allowScriptedContent: true),
+                      EpubDisplaySettings(flow: EpubFlow.paginated, useSnapAnimationAndroid: false, snap: true, theme: currentTheme.epubTheme, fontSize: currentFontSize, allowScriptedContent: true),
                   selectionContextMenu: ContextMenu(
                     menuItems: [
                       ContextMenuItem(
@@ -330,6 +318,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     print("Reloacted to $value");
                     setState(() {
                       progress = value.progress;
+                      _currentCfi = value.startCfi;
                     });
                     _updatePageInfo();
                   },
@@ -368,10 +357,13 @@ class _MyHomePageState extends State<MyHomePage> {
                     print("on slection chnages");
                   },
                   onTouchDown: (x, y) {
-                    print("Touch down at $x , $y");
+                    // Track tap for toggle
                   },
                   onTouchUp: (x, y) {
-                    print("Touch up at $x , $y");
+                    // Toggle controls visibility on tap
+                    setState(() {
+                      _showControls = !_showControls;
+                    });
                   },
                   selectAnnotationRange: true,
                 ),
@@ -384,85 +376,223 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
           ),
-          // Bottom navigation bar
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, -2),
+
+          // Top overlay bar (X button, title, ... menu)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            top: _showControls ? 0 : -100,
+            left: 0,
+            right: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    currentTheme.backgroundColor.withOpacity(0.95),
+                    currentTheme.backgroundColor.withOpacity(0.0),
+                  ],
                 ),
-              ],
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Chapters button
-                IconButton(
-                  icon: const Icon(Icons.menu, size: 28),
-                  onPressed: () => ChapterDrawer.show(context, epubController),
-                ),
-                // Page indicator
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.deepPurple.shade400, Colors.deepPurple.shade600],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(25),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.deepPurple.withOpacity(0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      if (isLoadingPages)
-                        const SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          padding: EdgeInsets.all(12),
+                          decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                          child: Image.asset(
+                            'assets/images/x.png',
+                            width: 10,
+                            height: 10,
+                            color: currentTheme.buttonColor,
                           ),
-                        )
-                      else
-                        Icon(
-                          Icons.library_books,
-                          size: 16,
-                          color: Colors.white.withOpacity(0.9),
                         ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '$currentPage / $totalPages',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                          letterSpacing: 0.5,
-                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => _showMenu,
+                        child: Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                            child: Icon(Icons.more_horiz, color: currentTheme.buttonColor, size: 20)),
                       ),
                     ],
                   ),
                 ),
-                // Theme settings button
-                IconButton(
-                  icon: const Icon(Icons.text_fields, size: 28),
-                  onPressed: _showThemeSettings,
-                ),
-              ],
+              ),
             ),
           ),
+
+          // Bottom overlay bar (hamburger menu, page indicator, Aa)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            bottom: _showControls ? 0 : -100,
+            left: 0,
+            right: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    currentTheme.backgroundColor.withOpacity(0.95),
+                    currentTheme.backgroundColor.withOpacity(0.0),
+                  ],
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12).copyWith(bottom: 30),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Hamburger menu (chapters)
+                      GestureDetector(
+                        onTap: () => ChapterDrawer.show(
+                          context,
+                          epubController,
+                          bookTitle: _titleText,
+                          currentPage: currentPage,
+                          totalPages: totalPages,
+                          currentCfi: _currentCfi,
+                        ),
+                        child: Container(
+                          padding: EdgeInsets.all(13),
+                          decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                          child: Image.asset(
+                            'assets/images/content_list.png',
+                            width: 15,
+                            height: 15,
+                            color: currentTheme.buttonColor,
+                          ),
+                        ),
+                      ),
+                      pageSlider(context),
+
+                      // Aa (theme settings)
+                      GestureDetector(
+                        onTap: () => _showThemeSettings(),
+                        child: Container(
+                          padding: EdgeInsets.all(10),
+                          decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                          child: Image.asset(
+                            'assets/images/font_logo.png',
+                            width: 24,
+                            height: 24,
+                            color: currentTheme.buttonColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // Centered page indicator with navigation
         ],
+      ),
+    );
+  }
+
+  Expanded pageSlider(BuildContext context) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 18),
+        height: 40,
+        decoration: BoxDecoration(
+          color: currentTheme.buttonBackgroundColor,
+          borderRadius: BorderRadius.circular(50),
+        ),
+        child: GestureDetector(
+          onTapDown: (details) {
+            final RenderBox box = context.findRenderObject() as RenderBox;
+            final localPosition = details.localPosition;
+            final barWidth = box.size.width - 40;
+            final tapX = localPosition.dx - 20;
+
+            if (tapX >= 0 && tapX <= barWidth) {
+              final percentage = tapX / barWidth;
+              final targetPage = (percentage * totalPages).round().clamp(1, totalPages);
+              if (targetPage != currentPage) {
+                _jumpToPage(targetPage);
+              }
+            }
+          },
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Full width background progress bar
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(50),
+                  child: Row(
+                    children: [
+                      // Filled portion
+                      Expanded(
+                        flex: totalPages > 0 ? currentPage : 1,
+                        child: Container(
+                          color: currentTheme.buttonColor.withOpacity(0.15),
+                        ),
+                      ),
+                      // Unfilled portion
+                      Expanded(
+                        flex: totalPages > 0 ? (totalPages - currentPage).clamp(1, totalPages) : 1,
+                        child: Container(
+                          color: Colors.transparent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Page text centered
+              Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '$currentPage',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'Gilroy',
+                        fontWeight: FontWeight.w600,
+                        color: currentTheme.textColor,
+                      ),
+                    ),
+                    TextSpan(
+                      text: ' / ',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'Gilroy',
+                        fontWeight: FontWeight.w600,
+                        color: currentTheme.textColor.withOpacity(0.4),
+                      ),
+                    ),
+                    TextSpan(
+                      text: '$totalPages',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'Gilroy',
+                        color: currentTheme.textColor.withOpacity(0.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
