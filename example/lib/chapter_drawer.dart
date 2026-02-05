@@ -11,6 +11,7 @@ class ChapterDrawer {
     int? currentPage,
     int? totalPages,
     String? currentCfi,
+    String? currentHref,
   }) async {
     final chapters = controller.getChapters();
     final metadata = await controller.getMetadata();
@@ -136,7 +137,7 @@ class ChapterDrawer {
                         final level = _getChapterLevel(chapter);
                         final pageNumber = chapterPages[chapter.href];
 
-                        // Determine if this is the current chapter based on current page
+                        // Determine if this is the current chapter based on current href
                         final bool isCurrentChapter = _isCurrentChapter(
                           pageNumber,
                           currentPage,
@@ -145,6 +146,7 @@ class ChapterDrawer {
                           chapterPages,
                           currentCfi,
                           chapter,
+                          currentHref,
                         );
 
                         return GestureDetector(
@@ -235,8 +237,26 @@ class ChapterDrawer {
     Map<String, int> chapterPages,
     String? currentCfi,
     EpubChapter chapter,
+    String? currentHref,
   ) {
-    // First try to match by CFI if available
+    // First try to match by href (most accurate)
+    if (currentHref != null && currentHref.isNotEmpty) {
+      // Remove fragment identifiers (#...) for comparison
+      String cleanCurrentHref = currentHref.split('#').first;
+      String cleanChapterHref = chapter.href.split('#').first;
+      
+      // Direct match
+      if (cleanChapterHref == cleanCurrentHref) {
+        return true;
+      }
+      
+      // Check if current href ends with chapter href (for relative paths)
+      if (cleanCurrentHref.endsWith(cleanChapterHref) || cleanChapterHref.endsWith(cleanCurrentHref)) {
+        return true;
+      }
+    }
+    
+    // Second try: match by CFI if available
     if (currentCfi != null && currentCfi.isNotEmpty) {
       // Extract spine index from CFI: epubcfi(/6/22!/4/56/1:214) -> 22
       final spineMatch = RegExp(r'/6/(\d+)!').firstMatch(currentCfi);

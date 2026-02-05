@@ -7,13 +7,13 @@ part of 'epub_chapter.dart';
 // **************************************************************************
 
 EpubChapter _$EpubChapterFromJson(Map<String, dynamic> json) => EpubChapter(
-      title: json['title'] as String,
-      href: json['href'] as String,
-      id: json['id'] as String,
-      subitems: (json['subitems'] as List<dynamic>)
-          .map((e) => EpubChapter.fromJson(e as Map<String, dynamic>))
-          .toList(),
-    );
+  title: json['title'] as String,
+  href: json['href'] as String,
+  id: json['id'] as String,
+  subitems: (json['subitems'] as List<dynamic>)
+      .map((e) => EpubChapter.fromJson(e as Map<String, dynamic>))
+      .toList(),
+);
 
 Map<String, dynamic> _$EpubChapterToJson(EpubChapter instance) =>
     <String, dynamic>{

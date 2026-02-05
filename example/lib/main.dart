@@ -59,6 +59,7 @@ class _MyHomePageState extends State<MyHomePage> {
   int totalPages = 1;
 
   String? _currentCfi;
+  String? _currentHref;
   Key _epubKey = UniqueKey();
   EpubSource? _epubSource;
   String? _initialCfi;
@@ -68,7 +69,6 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isProgressLongPressed = false;
   double _tempSliderValue = 0.0;
   List<EpubChapter> _chapters = [];
-  Map<String, int> _chapterPages = {};
   String _currentChapterTitle = '';
 
   Future<void> _pickAndOpenEpub() async {
@@ -174,54 +174,20 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _calculateChapterPages() async {
-    if (_chapters.isEmpty) return;
-
-    try {
-      final pageInfo = await epubController.getPageInfo();
-      final total = pageInfo['totalPages'] ?? 1;
-
-      Map<String, int> pages = {};
-
-      // Flatten all chapters including subitems
-      List<EpubChapter> flatChapters = [];
-      void addChapters(List<EpubChapter> chapters) {
-        for (var chapter in chapters) {
-          flatChapters.add(chapter);
-          if (chapter.subitems.isNotEmpty) {
-            addChapters(chapter.subitems);
-          }
-        }
-      }
-
-      addChapters(_chapters);
-
-      // Simple estimation: distribute pages evenly
-      for (int i = 0; i < flatChapters.length; i++) {
-        final chapter = flatChapters[i];
-        final estimatedPage = ((i * total) / flatChapters.length).ceil() + 1;
-        pages[chapter.href] = estimatedPage.clamp(1, total);
-      }
-
-      setState(() {
-        _chapterPages = pages;
-      });
-    } catch (e) {
-      print('Error calculating chapter pages: $e');
+  // Find chapter by href
+  String _getChapterTitleByHref(String? href) {
+    if (href == null || href.isEmpty || _chapters.isEmpty) {
+      return _titleText;
     }
-  }
 
-  String _getChapterForPage(int page) {
-    if (_chapters.isEmpty) return _titleText;
+    // Remove fragment identifier (#...) from href if present
+    String cleanHref = href.split('#').first;
 
     // Flatten chapters with parent info
     List<Map<String, dynamic>> flatChapters = [];
     void addChapters(List<EpubChapter> chapters, {EpubChapter? parent}) {
       for (var chapter in chapters) {
-        flatChapters.add({
-          'chapter': chapter,
-          'parent': parent,
-        });
+        flatChapters.add({'chapter': chapter, 'parent': parent});
         if (chapter.subitems.isNotEmpty) {
           addChapters(chapter.subitems, parent: chapter);
         }
@@ -230,16 +196,16 @@ class _MyHomePageState extends State<MyHomePage> {
 
     addChapters(_chapters);
 
-    // Find the chapter for this page
+    // Find the chapter matching this href
     Map<String, dynamic>? currentChapterInfo;
-    int closestPage = 0;
 
     for (var info in flatChapters) {
       EpubChapter chapter = info['chapter'];
-      int chapterPage = _chapterPages[chapter.href] ?? 0;
-      if (chapterPage <= page && chapterPage > closestPage) {
-        closestPage = chapterPage;
+      String chapterHref = chapter.href.split('#').first;
+
+      if (chapterHref == cleanHref || cleanHref.endsWith(chapterHref)) {
         currentChapterInfo = info;
+        break;
       }
     }
 
@@ -264,11 +230,12 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
 
-    // Use current page to find chapter
-    String chapterTitle = _getChapterForPage(currentPage);
+    // Use href to find chapter (more accurate than page numbers)
+    String chapterTitle = _getChapterTitleByHref(_currentHref);
     setState(() {
       _currentChapterTitle = chapterTitle;
     });
+    print('📖 Current chapter updated: $_currentChapterTitle (href: $_currentHref)');
   }
 
   void _showMenu() {
@@ -411,16 +378,18 @@ class _MyHomePageState extends State<MyHomePage> {
                 _chapters = chapters;
                 isLoading = false;
               });
-              _calculateChapterPages();
+              _updateCurrentChapter();
             },
             onEpubLoaded: () async {
               print('✓ EPUB başarıyla yüklendi');
             },
             onRelocated: (value) {
-              print("Reloacted to $value");
+              print("Relocated to $value");
+              print("Relocated href: ${value.href}");
               setState(() {
                 progress = value.progress;
                 _currentCfi = value.startCfi;
+                _currentHref = value.href;
               });
               _updatePageInfo();
               _updateCurrentChapter();
@@ -441,6 +410,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 });
               }
               _updatePageInfo();
+              _updateCurrentChapter();
             },
             onSelection: (selectedText, cfiRange, selectionRect, viewRect) {
               print("On selection changes");
@@ -546,10 +516,10 @@ class _MyHomePageState extends State<MyHomePage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 12,
                         fontFamily: 'Gilroy',
                         fontWeight: FontWeight.w600,
-                        color: currentTheme.textColor.withOpacity(0.8),
+                        color: currentTheme.textColor.withOpacity(0.5),
                       ),
                     ),
                   ),
@@ -650,6 +620,7 @@ class _MyHomePageState extends State<MyHomePage> {
                               currentPage: currentPage,
                               totalPages: totalPages,
                               currentCfi: _currentCfi,
+                              currentHref: _currentHref,
                             ),
                             child: Container(
                               padding: EdgeInsets.all(13),
@@ -715,37 +686,26 @@ class _MyHomePageState extends State<MyHomePage> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12).copyWith(bottom: 24),
                     child: Center(
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '$currentPage',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontFamily: 'Gilroy',
-                                fontWeight: FontWeight.w600,
-                                color: currentTheme.textColor.withOpacity(0.8),
+                      child: GestureDetector(
+                        onTap: () {
+                          print('📍 BOTTOM PAGE INDICATOR: $currentPage / $totalPages');
+                          print('📚 Current chapter (from bottom): $_currentChapterTitle');
+                          print('🔗 Current href: $_currentHref');
+                        },
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '$currentPage',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontFamily: 'Gilroy',
+                                  fontWeight: FontWeight.w600,
+                                  color: currentTheme.textColor.withOpacity(0.6),
+                                ),
                               ),
-                            ),
-                            TextSpan(
-                              text: ' / ',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontFamily: 'Gilroy',
-                                fontWeight: FontWeight.w600,
-                                color: currentTheme.textColor.withOpacity(0.4),
-                              ),
-                            ),
-                            TextSpan(
-                              text: '$totalPages',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                fontFamily: 'Gilroy',
-                                color: currentTheme.textColor.withOpacity(0.4),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),

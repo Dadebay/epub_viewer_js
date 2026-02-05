@@ -7,12 +7,13 @@ part of 'epub_location.dart';
 // **************************************************************************
 
 EpubLocation _$EpubLocationFromJson(Map<String, dynamic> json) => EpubLocation(
-      startCfi: json['startCfi'] as String,
-      endCfi: json['endCfi'] as String,
-      startXpath: json['startXpath'] as String?,
-      endXpath: json['endXpath'] as String?,
-      progress: (json['progress'] as num).toDouble(),
-    );
+  startCfi: json['startCfi'] as String,
+  endCfi: json['endCfi'] as String,
+  startXpath: json['startXpath'] as String?,
+  endXpath: json['endXpath'] as String?,
+  progress: (json['progress'] as num).toDouble(),
+  href: json['href'] as String?,
+);
 
 Map<String, dynamic> _$EpubLocationToJson(EpubLocation instance) =>
     <String, dynamic>{
@@ -21,4 +22,5 @@ Map<String, dynamic> _$EpubLocationToJson(EpubLocation instance) =>
       'startXpath': instance.startXpath,
       'endXpath': instance.endXpath,
       'progress': instance.progress,
+      'href': instance.href,
     };

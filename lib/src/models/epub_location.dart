@@ -19,14 +19,17 @@ class EpubLocation {
   /// Progress percentage of location, value between 0.0 and 1.0
   double progress;
 
+  /// Current href/spine item
+  String? href;
+
   EpubLocation({
     required this.startCfi,
     required this.endCfi,
     this.startXpath,
     this.endXpath,
     required this.progress,
+    this.href,
   });
-  factory EpubLocation.fromJson(Map<String, dynamic> json) =>
-      _$EpubLocationFromJson(json);
+  factory EpubLocation.fromJson(Map<String, dynamic> json) => _$EpubLocationFromJson(json);
   Map<String, dynamic> toJson() => _$EpubLocationToJson(this);
 }
