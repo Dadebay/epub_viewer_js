@@ -53,6 +53,7 @@ class ChapterDrawer {
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               color: Colors.black87,
+                              fontFamily: 'Gilroy',
                               fontSize: 17,
                             ),
                             maxLines: 2,
@@ -66,6 +67,7 @@ class ChapterDrawer {
                                 style: TextStyle(
                                   color: Colors.black.withOpacity(0.55),
                                   fontSize: 13,
+                                  fontFamily: 'Gilroy',
                                 ),
                                 children: [
                                   TextSpan(
@@ -74,6 +76,7 @@ class ChapterDrawer {
                                       color: Colors.black,
                                       fontWeight: FontWeight.w600,
                                       fontSize: 13.5,
+                                      fontFamily: 'Gilroy',
                                     ),
                                   ),
                                 ],
@@ -157,15 +160,19 @@ class ChapterDrawer {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Flexible(
-                                  child: Text(
-                                    chapter.title.trim(),
-                                    textAlign: TextAlign.start,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: isCurrentChapter ? Colors.black : Colors.grey,
-                                      fontSize: level > 0 ? 14 : 16,
-                                      fontWeight: isCurrentChapter ? FontWeight.bold : FontWeight.w400,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: Text(
+                                      chapter.title.trim(),
+                                      textAlign: TextAlign.start,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: isCurrentChapter ? Colors.black : Colors.grey,
+                                        fontSize: level > 0 ? 14 : 16,
+                                        fontFamily: 'Gilroy',
+                                        fontWeight: isCurrentChapter ? FontWeight.bold : FontWeight.w400,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -175,6 +182,7 @@ class ChapterDrawer {
                                     style: TextStyle(
                                       color: isCurrentChapter ? Colors.black : Color(0xff3C3C434D).withOpacity(0.3),
                                       fontWeight: isCurrentChapter ? FontWeight.bold : FontWeight.w400,
+                                      fontFamily: 'Gilroy',
                                       fontSize: level > 0 ? 14 : 16,
                                     ),
                                   )

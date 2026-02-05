@@ -64,6 +64,12 @@ class _MyHomePageState extends State<MyHomePage> {
   String? _initialCfi;
   bool _showControls = true;
   String _titleText = 'EPUB Kitap Okuyucu';
+  bool _isDraggingSlider = false;
+  bool _isProgressLongPressed = false;
+  double _tempSliderValue = 0.0;
+  List<EpubChapter> _chapters = [];
+  Map<String, int> _chapterPages = {};
+  String _currentChapterTitle = '';
 
   Future<void> _pickAndOpenEpub() async {
     final result = await FilePicker.platform.pickFiles(
@@ -118,12 +124,17 @@ class _MyHomePageState extends State<MyHomePage> {
         currentTheme: currentTheme,
         currentFontSize: currentFontSize,
         onThemeChanged: (theme) {
+          print('🎨 Theme değişti: ${theme.name}');
+          print('   Font-family: ${theme.fontFamily}');
+          print('   Font-weight: ${theme.fontWeight}');
+          print('   CustomCss: ${theme.epubTheme.customCss}');
           setState(() {
             currentTheme = theme;
           });
           epubController.updateTheme(theme: theme.epubTheme);
         },
         onFontSizeChanged: (size) {
+          print('📏 Font size değişti: $size');
           setState(() {
             currentFontSize = size;
           });
@@ -144,6 +155,11 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         currentPage = pageInfo['currentPage'] ?? 1;
         totalPages = pageInfo['totalPages'] ?? 1;
+
+        // If we got real page count (more than initial placeholder), hide loading
+        if (totalPages > 10 && isLoadingPages) {
+          isLoadingPages = false;
+        }
       });
 
       print('✅ State güncellendi - currentPage: $currentPage, totalPages: $totalPages');
@@ -152,27 +168,107 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _goToNextPage() async {
-    if (currentPage < totalPages) {
-      // await epubController.nextPage();
-      await _updatePageInfo();
-    }
-  }
-
-  Future<void> _goToPreviousPage() async {
-    if (currentPage > 1) {
-      // await epubController.previousPage();
-      await _updatePageInfo();
-    }
-  }
-
   Future<void> _jumpToPage(int page) async {
     if (page >= 1 && page <= totalPages && page != currentPage) {
-      // Calculate progress based on page
-      double targetProgress = (page - 1) / (totalPages - 1);
-      // await epubController.gotoProgress(targetProgress);
       await _updatePageInfo();
     }
+  }
+
+  Future<void> _calculateChapterPages() async {
+    if (_chapters.isEmpty) return;
+
+    try {
+      final pageInfo = await epubController.getPageInfo();
+      final total = pageInfo['totalPages'] ?? 1;
+
+      Map<String, int> pages = {};
+
+      // Flatten all chapters including subitems
+      List<EpubChapter> flatChapters = [];
+      void addChapters(List<EpubChapter> chapters) {
+        for (var chapter in chapters) {
+          flatChapters.add(chapter);
+          if (chapter.subitems.isNotEmpty) {
+            addChapters(chapter.subitems);
+          }
+        }
+      }
+
+      addChapters(_chapters);
+
+      // Simple estimation: distribute pages evenly
+      for (int i = 0; i < flatChapters.length; i++) {
+        final chapter = flatChapters[i];
+        final estimatedPage = ((i * total) / flatChapters.length).ceil() + 1;
+        pages[chapter.href] = estimatedPage.clamp(1, total);
+      }
+
+      setState(() {
+        _chapterPages = pages;
+      });
+    } catch (e) {
+      print('Error calculating chapter pages: $e');
+    }
+  }
+
+  String _getChapterForPage(int page) {
+    if (_chapters.isEmpty) return _titleText;
+
+    // Flatten chapters with parent info
+    List<Map<String, dynamic>> flatChapters = [];
+    void addChapters(List<EpubChapter> chapters, {EpubChapter? parent}) {
+      for (var chapter in chapters) {
+        flatChapters.add({
+          'chapter': chapter,
+          'parent': parent,
+        });
+        if (chapter.subitems.isNotEmpty) {
+          addChapters(chapter.subitems, parent: chapter);
+        }
+      }
+    }
+
+    addChapters(_chapters);
+
+    // Find the chapter for this page
+    Map<String, dynamic>? currentChapterInfo;
+    int closestPage = 0;
+
+    for (var info in flatChapters) {
+      EpubChapter chapter = info['chapter'];
+      int chapterPage = _chapterPages[chapter.href] ?? 0;
+      if (chapterPage <= page && chapterPage > closestPage) {
+        closestPage = chapterPage;
+        currentChapterInfo = info;
+      }
+    }
+
+    if (currentChapterInfo == null) return _titleText;
+
+    EpubChapter currentChapter = currentChapterInfo['chapter'];
+    EpubChapter? parentChapter = currentChapterInfo['parent'];
+
+    // If there's a parent, show both
+    if (parentChapter != null) {
+      return '${parentChapter.title.trim()}\n${currentChapter.title.trim()}';
+    }
+
+    return currentChapter.title.trim();
+  }
+
+  void _updateCurrentChapter() {
+    if (_chapters.isEmpty) {
+      setState(() {
+        _currentChapterTitle = _titleText;
+      });
+      return;
+    }
+
+    // Use current page to find chapter
+    String chapterTitle = _getChapterForPage(currentPage);
+    setState(() {
+      _currentChapterTitle = chapterTitle;
+    });
   }
 
   void _showMenu() {
@@ -225,53 +321,60 @@ class _MyHomePageState extends State<MyHomePage> {
     if (_epubSource == null) {
       return Scaffold(
         backgroundColor: Colors.grey[50],
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.menu_book,
-                size: 120,
-                color: Colors.grey[400],
-              ),
-              const SizedBox(height: 32),
-              Text(
-                'EPUB Kitap Okuyucu',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.menu_book,
+                      size: 120,
+                      color: Colors.grey[400],
+                    ),
+                    const SizedBox(height: 32),
+                    Text(
+                      'EPUB Kitap Okuyucu',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Okumak için bir kitap seçin',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    const SizedBox(height: 48),
+                    ElevatedButton.icon(
+                      onPressed: _pickAndOpenEpub,
+                      icon: const Icon(Icons.folder_open, size: 24),
+                      label: const Text(
+                        'Kitap Seç',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                'Okumak için bir kitap seçin',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 48),
-              ElevatedButton.icon(
-                onPressed: _pickAndOpenEpub,
-                icon: const Icon(Icons.folder_open, size: 24),
-                label: const Text(
-                  'Kitap Seç',
-                  style: TextStyle(fontSize: 18),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       );
@@ -283,98 +386,83 @@ class _MyHomePageState extends State<MyHomePage> {
       body: Stack(
         children: [
           // Main EPUB Viewer - full screen
-          Positioned.fill(
-            child: Stack(
-              children: [
-                EpubViewer(
-                  key: _epubKey,
-                  initialCfi: _initialCfi,
-                  epubSource: _epubSource!,
-                  epubController: epubController,
-                  displaySettings:
-                      EpubDisplaySettings(flow: EpubFlow.paginated, useSnapAnimationAndroid: false, snap: true, theme: currentTheme.epubTheme, fontSize: currentFontSize, allowScriptedContent: true),
-                  selectionContextMenu: ContextMenu(
-                    menuItems: [
-                      ContextMenuItem(
-                        title: "Highlight",
-                        id: 1,
-                        action: () async {
-                          epubController.addHighlight(cfi: textSelectionCfi);
-                        },
-                      ),
-                    ],
-                    settings: ContextMenuSettings(hideDefaultSystemContextMenuItems: true),
-                  ),
-                  onChaptersLoaded: (chapters) {
-                    print('Chapters yüklendi: ${chapters.length} bölüm');
-                    setState(() {
-                      isLoading = false;
-                    });
+          EpubViewer(
+            key: _epubKey,
+            initialCfi: _initialCfi,
+            epubSource: _epubSource!,
+            epubController: epubController,
+            displaySettings:
+                EpubDisplaySettings(flow: EpubFlow.paginated, useSnapAnimationAndroid: false, snap: true, theme: currentTheme.epubTheme, fontSize: currentFontSize, allowScriptedContent: true),
+            selectionContextMenu: ContextMenu(
+              menuItems: [
+                ContextMenuItem(
+                  title: "Highlight",
+                  id: 1,
+                  action: () async {
+                    epubController.addHighlight(cfi: textSelectionCfi);
                   },
-                  onEpubLoaded: () async {
-                    print('✓ EPUB başarıyla yüklendi');
-                  },
-                  onRelocated: (value) {
-                    print("Reloacted to $value");
-                    setState(() {
-                      progress = value.progress;
-                      _currentCfi = value.startCfi;
-                    });
-                    _updatePageInfo();
-                  },
-                  onAnnotationClicked: (cfi, data) {
-                    print("Annotation clicked $cfi");
-                  },
-                  onTextSelected: (epubTextSelection) {
-                    textSelectionCfi = epubTextSelection.selectionCfi;
-                    print(textSelectionCfi);
-                  },
-                  onLocationLoaded: () {
-                    /// progress will be available after this callback
-                    print('✓ Location yüklendi');
-                    if (isLoading) {
-                      setState(() {
-                        isLoading = false;
-                      });
-                    }
-                    // Mark loading pages as complete
-                    Future.delayed(const Duration(milliseconds: 500), () {
-                      if (mounted) {
-                        setState(() {
-                          isLoadingPages = false;
-                        });
-                      }
-                    });
-                    _updatePageInfo();
-                  },
-                  onSelection: (selectedText, cfiRange, selectionRect, viewRect) {
-                    print("On selection changes");
-                  },
-                  onDeselection: () {
-                    print("on delection");
-                  },
-                  onSelectionChanging: () {
-                    print("on slection chnages");
-                  },
-                  onTouchDown: (x, y) {
-                    // Track tap for toggle
-                  },
-                  onTouchUp: (x, y) {
-                    // Toggle controls visibility on tap
-                    setState(() {
-                      _showControls = !_showControls;
-                    });
-                  },
-                  selectAnnotationRange: true,
                 ),
-                Visibility(
-                  visible: isLoading,
-                  child: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                )
               ],
+              settings: ContextMenuSettings(hideDefaultSystemContextMenuItems: true),
             ),
+            onChaptersLoaded: (chapters) {
+              print('Chapters yüklendi: ${chapters.length} bölüm');
+              setState(() {
+                _chapters = chapters;
+                isLoading = false;
+              });
+              _calculateChapterPages();
+            },
+            onEpubLoaded: () async {
+              print('✓ EPUB başarıyla yüklendi');
+            },
+            onRelocated: (value) {
+              print("Reloacted to $value");
+              setState(() {
+                progress = value.progress;
+                _currentCfi = value.startCfi;
+              });
+              _updatePageInfo();
+              _updateCurrentChapter();
+            },
+            onAnnotationClicked: (cfi, data) {
+              print("Annotation clicked $cfi");
+            },
+            onTextSelected: (epubTextSelection) {
+              textSelectionCfi = epubTextSelection.selectionCfi;
+              print(textSelectionCfi);
+            },
+            onLocationLoaded: () {
+              /// progress will be available after this callback
+              print('✓ Location yüklendi');
+              if (isLoading) {
+                setState(() {
+                  isLoading = false;
+                });
+              }
+              _updatePageInfo();
+            },
+            onSelection: (selectedText, cfiRange, selectionRect, viewRect) {
+              print("On selection changes");
+            },
+            onDeselection: () {
+              print("on delection");
+            },
+            onSelectionChanging: () {
+              print("on slection chnages");
+            },
+            onTouchDown: (x, y) {
+              // Track tap for toggle
+            },
+            onTouchUp: (x, y) {
+              // Toggle controls visibility on tap (but not if dragging slider)
+              if (!_isDraggingSlider && !_isProgressLongPressed) {
+                setState(() {
+                  _showControls = !_showControls;
+                });
+              }
+            },
+            selectAnnotationRange: true,
           ),
 
           // Top overlay bar (X button, title, ... menu)
@@ -429,11 +517,106 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
 
+          // Minimal chapter title for focus reading mode (when controls are hidden)
+          if (!_showControls && _currentChapterTitle.isNotEmpty)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              top: _showControls ? -100 : 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      currentTheme.backgroundColor.withOpacity(0.9),
+                      currentTheme.backgroundColor.withOpacity(0.0),
+                    ],
+                  ),
+                ),
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    child: Text(
+                      _currentChapterTitle,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'Gilroy',
+                        fontWeight: FontWeight.w600,
+                        color: currentTheme.textColor.withOpacity(0.8),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Page indicator popup when dragging
+          if (_isProgressLongPressed)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 80,
+              child: Center(
+                child: Container(
+                  width: MediaQuery.of(context).size.width * 0.65,
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Color(0xffd4d4d5),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.3),
+                        blurRadius: 20,
+                        offset: Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Page ${(_tempSliderValue * totalPages).round().clamp(1, totalPages)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontFamily: 'Gilroy',
+                          fontWeight: FontWeight.bold,
+                          color: currentTheme.textColor,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          _currentChapterTitle.isNotEmpty ? _currentChapterTitle : _titleText,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'Gilroy',
+                            color: currentTheme.textColor.withOpacity(0.6),
+                            height: 1.3,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
           // Bottom overlay bar (hamburger menu, page indicator, Aa)
           AnimatedPositioned(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
-            bottom: _showControls ? 0 : -100,
+            bottom: (_showControls || _isProgressLongPressed) ? 0 : -100,
             left: 0,
             right: 0,
             child: Container(
@@ -455,42 +638,52 @@ class _MyHomePageState extends State<MyHomePage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       // Hamburger menu (chapters)
-                      GestureDetector(
-                        onTap: () => ChapterDrawer.show(
-                          context,
-                          epubController,
-                          bookTitle: _titleText,
-                          currentPage: currentPage,
-                          totalPages: totalPages,
-                          currentCfi: _currentCfi,
-                        ),
-                        child: Container(
-                          padding: EdgeInsets.all(13),
-                          decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
-                          child: Image.asset(
-                            'assets/images/content_list.png',
-                            width: 15,
-                            height: 15,
-                            color: currentTheme.buttonColor,
+                      if (_showControls)
+                        AnimatedOpacity(
+                          opacity: _isProgressLongPressed ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 200),
+                          child: GestureDetector(
+                            onTap: () => ChapterDrawer.show(
+                              context,
+                              epubController,
+                              bookTitle: _titleText,
+                              currentPage: currentPage,
+                              totalPages: totalPages,
+                              currentCfi: _currentCfi,
+                            ),
+                            child: Container(
+                              padding: EdgeInsets.all(13),
+                              decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                              child: Image.asset(
+                                'assets/images/content_list.png',
+                                width: 15,
+                                height: 15,
+                                color: currentTheme.buttonColor,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
                       pageSlider(context),
 
                       // Aa (theme settings)
-                      GestureDetector(
-                        onTap: () => _showThemeSettings(),
-                        child: Container(
-                          padding: EdgeInsets.all(10),
-                          decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
-                          child: Image.asset(
-                            'assets/images/font_logo.png',
-                            width: 24,
-                            height: 24,
-                            color: currentTheme.buttonColor,
+                      if (_showControls)
+                        AnimatedOpacity(
+                          opacity: _isProgressLongPressed ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 200),
+                          child: GestureDetector(
+                            onTap: () => _showThemeSettings(),
+                            child: Container(
+                              padding: EdgeInsets.all(10),
+                              decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                              child: Image.asset(
+                                'assets/images/font_logo.png',
+                                width: 24,
+                                height: 24,
+                                color: currentTheme.buttonColor,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -498,99 +691,197 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
 
+          // Minimal page indicator for focus reading mode (when controls are hidden)
+          if (!_showControls && !isLoadingPages)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              bottom: _showControls ? -100 : 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      currentTheme.backgroundColor.withOpacity(0.9),
+                      currentTheme.backgroundColor.withOpacity(0.0),
+                    ],
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12).copyWith(bottom: 24),
+                    child: Center(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: '$currentPage',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontFamily: 'Gilroy',
+                                fontWeight: FontWeight.w600,
+                                color: currentTheme.textColor.withOpacity(0.8),
+                              ),
+                            ),
+                            TextSpan(
+                              text: ' / ',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontFamily: 'Gilroy',
+                                fontWeight: FontWeight.w600,
+                                color: currentTheme.textColor.withOpacity(0.4),
+                              ),
+                            ),
+                            TextSpan(
+                              text: '$totalPages',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                fontFamily: 'Gilroy',
+                                color: currentTheme.textColor.withOpacity(0.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
           // Centered page indicator with navigation
         ],
       ),
     );
   }
 
-  Expanded pageSlider(BuildContext context) {
+  Widget pageSlider(BuildContext context) {
+    final displayPage = _isProgressLongPressed ? (_tempSliderValue * totalPages).round().clamp(1, totalPages) : currentPage;
+
     return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 18),
-        height: 40,
-        decoration: BoxDecoration(
-          color: currentTheme.buttonBackgroundColor,
-          borderRadius: BorderRadius.circular(50),
-        ),
-        child: GestureDetector(
-          onTapDown: (details) {
-            final RenderBox box = context.findRenderObject() as RenderBox;
-            final localPosition = details.localPosition;
-            final barWidth = box.size.width - 40;
-            final tapX = localPosition.dx - 20;
+      child: GestureDetector(
+        onLongPressStart: (details) {
+          final RenderBox box = context.findRenderObject() as RenderBox;
+          final localX = details.localPosition.dx;
+          final percentage = (localX / box.size.width).clamp(0.0, 1.0);
 
-            if (tapX >= 0 && tapX <= barWidth) {
-              final percentage = tapX / barWidth;
-              final targetPage = (percentage * totalPages).round().clamp(1, totalPages);
-              if (targetPage != currentPage) {
-                _jumpToPage(targetPage);
-              }
-            }
-          },
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Full width background progress bar
-              Positioned.fill(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(50),
-                  child: Row(
-                    children: [
-                      // Filled portion
-                      Expanded(
-                        flex: totalPages > 0 ? currentPage : 1,
-                        child: Container(
-                          color: currentTheme.buttonColor.withOpacity(0.15),
-                        ),
+          setState(() {
+            _isProgressLongPressed = true;
+            _isDraggingSlider = true;
+            _tempSliderValue = percentage;
+          });
+        },
+        onLongPressMoveUpdate: (details) {
+          final RenderBox box = context.findRenderObject() as RenderBox;
+          final localX = details.localPosition.dx;
+          final percentage = (localX / box.size.width).clamp(0.0, 1.0);
+
+          setState(() {
+            _tempSliderValue = percentage;
+          });
+        },
+        onLongPressEnd: (details) {
+          final targetPage = (_tempSliderValue * totalPages).round().clamp(1, totalPages);
+          if (targetPage != currentPage) {
+            _jumpToPage(targetPage);
+          }
+          setState(() {
+            _isDraggingSlider = false;
+            _isProgressLongPressed = false;
+          });
+        },
+        child: AnimatedPadding(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          padding: EdgeInsets.symmetric(horizontal: _isProgressLongPressed ? 6 : 18),
+          child: Container(
+            height: 40,
+            decoration: BoxDecoration(
+              color: currentTheme.buttonBackgroundColor,
+              borderRadius: BorderRadius.circular(50),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Full width background progress bar
+                if (!isLoadingPages)
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(50),
+                      child: Row(
+                        children: [
+                          // Filled portion
+                          Expanded(
+                            flex: totalPages > 0 ? displayPage : 1,
+                            child: Container(
+                              color: currentTheme.buttonColor.withOpacity(0.15),
+                            ),
+                          ),
+                          // Unfilled portion
+                          Expanded(
+                            flex: totalPages > 0 ? (totalPages - displayPage).clamp(1, totalPages) : 1,
+                            child: Container(
+                              color: Colors.transparent,
+                            ),
+                          ),
+                        ],
                       ),
-                      // Unfilled portion
-                      Expanded(
-                        flex: totalPages > 0 ? (totalPages - currentPage).clamp(1, totalPages) : 1,
-                        child: Container(
-                          color: Colors.transparent,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
 
-              // Page text centered
-              Text.rich(
-                TextSpan(
-                  children: [
+                // Page text centered
+                if (!isLoadingPages)
+                  Text.rich(
                     TextSpan(
-                      text: '$currentPage',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontFamily: 'Gilroy',
-                        fontWeight: FontWeight.w600,
-                        color: currentTheme.textColor,
+                      children: [
+                        TextSpan(
+                          text: '$displayPage',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'Gilroy',
+                            fontWeight: FontWeight.w600,
+                            color: currentTheme.textColor,
+                          ),
+                        ),
+                        TextSpan(
+                          text: ' / ',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'Gilroy',
+                            fontWeight: FontWeight.w600,
+                            color: currentTheme.textColor.withOpacity(0.4),
+                          ),
+                        ),
+                        TextSpan(
+                          text: '$totalPages',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Gilroy',
+                            color: currentTheme.textColor.withOpacity(0.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(currentTheme.buttonColor),
                       ),
                     ),
-                    TextSpan(
-                      text: ' / ',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontFamily: 'Gilroy',
-                        fontWeight: FontWeight.w600,
-                        color: currentTheme.textColor.withOpacity(0.4),
-                      ),
-                    ),
-                    TextSpan(
-                      text: '$totalPages',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'Gilroy',
-                        color: currentTheme.textColor.withOpacity(0.4),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+              ],
+            ),
           ),
         ),
       ),

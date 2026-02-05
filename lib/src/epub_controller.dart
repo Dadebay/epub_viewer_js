@@ -175,6 +175,7 @@ class EpubController {
 
   ///Adjust font size in epub viewer
   setFontSize({required double fontSize}) async {
+    print('📤 EpubController.setFontSize gönderiliyor: $fontSize');
     await webViewController?.evaluateJavascript(
       source: 'setFontSize("$fontSize")',
     );
@@ -183,6 +184,10 @@ class EpubController {
   updateTheme({required EpubTheme theme}) async {
     String? foregroundColor = theme.foregroundColor?.toHex();
     String customCss = theme.customCss != null ? Utils.encodeMap(theme.customCss!) : "null";
+    print('📤 EpubController.updateTheme gönderiliyor:');
+    print('   foregroundColor: $foregroundColor');
+    print('   customCss encoded: $customCss');
+    print('   customCss raw: ${theme.customCss}');
     await webViewController?.evaluateJavascript(
       source: 'updateTheme("","$foregroundColor", $customCss)',
     );
