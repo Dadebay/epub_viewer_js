@@ -71,6 +71,9 @@ class _MyHomePageState extends State<MyHomePage> {
   double _dragStartValue = 0.0; // normalized 0..1 based on current page when long-press begins
   double _dragStartLocalX = 0.0;
   double _lastProgressFactor = 0.0; // tracks previous fill fraction to avoid jump-from-zero visual
+  double _touchDownX = 0.0;
+  double _touchDownY = 0.0;
+  DateTime? _touchDownAt;
   List<EpubChapter> _chapters = [];
   String _currentChapterTitle = '';
 
@@ -408,6 +411,7 @@ class _MyHomePageState extends State<MyHomePage> {
             onRelocated: (value) {
               print("Relocated to $value");
               print("Relocated href: ${value.href}");
+              print('🧭 onRelocated -> showControls=$_showControls dragging=$_isDraggingSlider longPress=$_isProgressLongPressed');
               setState(() {
                 progress = value.progress;
                 _currentCfi = value.startCfi;
@@ -444,14 +448,28 @@ class _MyHomePageState extends State<MyHomePage> {
               print("on slection chnages");
             },
             onTouchDown: (x, y) {
-              // Track tap for toggle
+              _touchDownX = x;
+              _touchDownY = y;
+              _touchDownAt = DateTime.now();
+              print('👆 TOUCH DOWN (x: $x, y: $y) dragging=$_isDraggingSlider longPressed=$_isProgressLongPressed showControls=$_showControls');
             },
             onTouchUp: (x, y) {
-              // Toggle controls visibility on tap (but not if dragging slider)
-              if (!_isDraggingSlider && !_isProgressLongPressed) {
+              final dt = _touchDownAt != null ? DateTime.now().difference(_touchDownAt!).inMilliseconds : -1;
+              final dx = (x - _touchDownX).abs();
+              final dy = (y - _touchDownY).abs();
+              final isTapLike = dx < 0.05 && dy < 0.05 && dt >= 0 && dt < 500;
+
+              print(
+                  '👆 TOUCH UP (x: $x, y: $y) dragging=$_isDraggingSlider longPressed=$_isProgressLongPressed showControls(before)=$_showControls dx=${dx.toStringAsFixed(3)} dy=${dy.toStringAsFixed(3)} dt=${dt}ms isTapLike=$isTapLike');
+
+              // Only toggle controls on true taps (small move + short press) and when not dragging slider/long-pressing progress
+              if (!_isDraggingSlider && !_isProgressLongPressed && isTapLike) {
                 setState(() {
                   _showControls = !_showControls;
+                  print('🎛️ showControls toggled -> now: $_showControls');
                 });
+              } else {
+                print('🎛️ skip toggle (dragging=$_isDraggingSlider longPressed=$_isProgressLongPressed isTapLike=$isTapLike)');
               }
             },
             selectAnnotationRange: true,
