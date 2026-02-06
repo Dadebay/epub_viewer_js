@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
+import 'package:example/reader_theme_model.dart';
 
 class ChapterDrawer {
   static Future<void> show(
@@ -12,7 +13,10 @@ class ChapterDrawer {
     int? totalPages,
     String? currentCfi,
     String? currentHref,
+    bool isLoadingPages = false,
+    ReaderThemeModel? theme,
   }) async {
+    final ReaderThemeModel usedTheme = theme ?? ReaderThemeModel.lightThemes.first;
     final chapters = controller.getChapters();
     final metadata = await controller.getMetadata();
 
@@ -29,7 +33,7 @@ class ChapterDrawer {
         builder: (context, scrollController) => Container(
           padding: EdgeInsets.zero,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: usedTheme.backgroundColor,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(10),
               topRight: Radius.circular(10),
@@ -43,7 +47,7 @@ class ChapterDrawer {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _CoverImage(coverBase64: metadata.coverImage),
+                    _CoverImage(coverBase64: metadata.coverImage, placeholderColor: usedTheme.buttonBackgroundColor),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -51,9 +55,9 @@ class ChapterDrawer {
                         children: [
                           Text(
                             bookTitle ?? metadata.title ?? 'Contents',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.w700,
-                              color: Colors.black87,
+                              color: usedTheme.textColor,
                               fontFamily: 'Gilroy',
                               fontSize: 17,
                             ),
@@ -66,7 +70,7 @@ class ChapterDrawer {
                               text: TextSpan(
                                 text: 'Page ',
                                 style: TextStyle(
-                                  color: Colors.black.withOpacity(0.55),
+                                  color: usedTheme.textColor.withOpacity(0.55),
                                   fontSize: 13,
                                   fontFamily: 'Gilroy',
                                 ),
@@ -74,7 +78,7 @@ class ChapterDrawer {
                                   TextSpan(
                                     text: '${currentPage ?? 1} of $totalPages',
                                     style: const TextStyle(
-                                      color: Colors.black,
+                                      color: Colors.white,
                                       fontWeight: FontWeight.w600,
                                       fontSize: 13.5,
                                       fontFamily: 'Gilroy',
@@ -89,10 +93,10 @@ class ChapterDrawer {
                     InkWell(
                       onTap: () => Navigator.of(context).pop(),
                       child: CircleAvatar(
-                        backgroundColor: Colors.grey[300],
-                        child: const Icon(
+                        backgroundColor: usedTheme.buttonBackgroundColor,
+                        child: Icon(
                           Icons.close,
-                          color: Colors.black,
+                          color: usedTheme.buttonColor,
                           size: 20,
                         ),
                       ),
@@ -100,13 +104,35 @@ class ChapterDrawer {
                   ],
                 ),
               ),
-              Divider(height: 1, thickness: 1, color: Colors.grey.withOpacity(0.2)),
+              Divider(height: 1, thickness: 1, color: usedTheme.textColor.withOpacity(0.15)),
               Expanded(
                 child: FutureBuilder<Map<String, int>>(
-                  future: _getChapterPages(controller, chapters),
+                  future: _getChapterPages(controller, chapters, isLoadingPages),
                   builder: (context, snapshot) {
                     final chapterPages = snapshot.data ?? {};
-                    final isLoading = snapshot.connectionState == ConnectionState.waiting;
+                    final isLoading = snapshot.connectionState == ConnectionState.waiting || isLoadingPages;
+
+                    int activeCount = 0;
+                    String? firstActiveTitle;
+                    for (int i = 0; i < chapters.length; i++) {
+                      final chapter = chapters[i];
+                      final pageNumber = chapterPages[chapter.href];
+                      final isActive = _isCurrentChapter(
+                        pageNumber,
+                        currentPage,
+                        i,
+                        chapters.length,
+                        chapterPages,
+                        currentCfi,
+                        chapter,
+                        currentHref,
+                      );
+                      if (isActive) {
+                        activeCount++;
+                        firstActiveTitle ??= chapter.title;
+                      }
+                    }
+                    print('CHAPTER DRAWER ACTIVE SUMMARY -> count: $activeCount, first: $firstActiveTitle, currentHref: $currentHref, currentCfi: $currentCfi');
 
                     return ListView.separated(
                       controller: scrollController,
@@ -119,7 +145,7 @@ class ChapterDrawer {
                           return Divider(
                             height: 1,
                             thickness: 0.3,
-                            color: Colors.grey.withOpacity(0.2),
+                            color: usedTheme.textColor.withOpacity(0.12),
                             indent: 16,
                             endIndent: 16,
                           );
@@ -128,7 +154,7 @@ class ChapterDrawer {
                         return Divider(
                           height: 1,
                           thickness: 0.5,
-                          color: Colors.grey.withOpacity(0.3),
+                          color: usedTheme.textColor.withOpacity(0.18),
                           indent: 16,
                         );
                       },
@@ -149,13 +175,21 @@ class ChapterDrawer {
                           currentHref,
                         );
 
+                        if (isCurrentChapter) {
+                          print('CHAPTER DRAWER ACTIVE ROW -> title: ${chapter.title}, href: ${chapter.href}, page: $pageNumber');
+                        }
                         return GestureDetector(
                           onTap: () {
-                            controller.display(cfi: chapter.href);
+                            final hasAnchor = chapter.id.isNotEmpty && !chapter.href.contains('#');
+                            final target = hasAnchor ? '${chapter.href}#${chapter.id}' : chapter.href;
+                            print(
+                                '-------------------------------------------------------------CHAPTER DRAWER TAP -> title: ${chapter.title}, href: ${chapter.href}, id: ${chapter.id}, target: $target');
+                            print('CHAPTER DRAWER STATE -> currentHref: $currentHref, currentCfi: $currentCfi');
+                            controller.display(cfi: target);
                             Navigator.pop(context);
                           },
                           child: Container(
-                            color: isCurrentChapter ? Colors.grey[200] : Colors.white,
+                            color: isCurrentChapter ? usedTheme.buttonBackgroundColor.withOpacity(0.4) : usedTheme.backgroundColor,
                             padding: EdgeInsets.symmetric(vertical: 25, horizontal: 25),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
@@ -170,7 +204,7 @@ class ChapterDrawer {
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
-                                        color: isCurrentChapter ? Colors.black : Colors.grey,
+                                        color: isCurrentChapter ? usedTheme.textColor : usedTheme.textColor.withOpacity(0.65),
                                         fontSize: level > 0 ? 14 : 16,
                                         fontFamily: 'Gilroy',
                                         fontWeight: isCurrentChapter ? FontWeight.bold : FontWeight.w400,
@@ -182,7 +216,7 @@ class ChapterDrawer {
                                   Text(
                                     '$pageNumber',
                                     style: TextStyle(
-                                      color: isCurrentChapter ? Colors.black : Color(0xff3C3C434D).withOpacity(0.3),
+                                      color: isCurrentChapter ? usedTheme.textColor : usedTheme.textColor.withOpacity(0.5),
                                       fontWeight: isCurrentChapter ? FontWeight.bold : FontWeight.w400,
                                       fontFamily: 'Gilroy',
                                       fontSize: level > 0 ? 14 : 16,
@@ -194,7 +228,9 @@ class ChapterDrawer {
                                     height: 14,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(isCurrentChapter ? Colors.black : Color(0xff3C3C434D).withOpacity(0.3)),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        isCurrentChapter ? usedTheme.textColor : usedTheme.textColor.withOpacity(0.5),
+                                      ),
                                     ),
                                   ),
                               ],
@@ -244,20 +280,40 @@ class ChapterDrawer {
       // Remove fragment identifiers (#...) for comparison
       String cleanCurrentHref = currentHref.split('#').first;
       String cleanChapterHref = chapter.href.split('#').first;
-      
+
       // Direct match
       if (cleanChapterHref == cleanCurrentHref) {
+        print('CHAPTER DRAWER ACTIVE -> title: ${chapter.title}, href: ${chapter.href} (href match)');
         return true;
       }
-      
+
       // Check if current href ends with chapter href (for relative paths)
       if (cleanCurrentHref.endsWith(cleanChapterHref) || cleanChapterHref.endsWith(cleanCurrentHref)) {
+        print('CHAPTER DRAWER ACTIVE -> title: ${chapter.title}, href: ${chapter.href} (href partial match)');
         return true;
       }
+      // If we have a current href but no match, do not fall back to page numbers
+      return false;
     }
-    
+
     // Second try: match by CFI if available
     if (currentCfi != null && currentCfi.isNotEmpty) {
+      // Try to match by anchor id inside CFI, e.g. [calibre_toc_2]
+      final anchorMatch = RegExp(r'\[([^\]]+)\]').firstMatch(currentCfi);
+      if (anchorMatch != null) {
+        final anchorId = anchorMatch.group(1);
+        if (anchorId != null && anchorId.isNotEmpty) {
+          if (chapter.id == anchorId) {
+            print('CHAPTER DRAWER ACTIVE -> title: ${chapter.title}, href: ${chapter.href} (cfi anchor match: $anchorId, id match)');
+            return true;
+          }
+          if (chapter.href.contains('#$anchorId') || chapter.href.endsWith(anchorId)) {
+            print('CHAPTER DRAWER ACTIVE -> title: ${chapter.title}, href: ${chapter.href} (cfi anchor match: $anchorId, href match)');
+            return true;
+          }
+        }
+      }
+
       // Extract spine index from CFI: epubcfi(/6/22!/4/56/1:214) -> 22
       final spineMatch = RegExp(r'/6/(\d+)!').firstMatch(currentCfi);
       if (spineMatch != null) {
@@ -268,6 +324,11 @@ class ChapterDrawer {
           return true;
         }
       }
+    }
+
+    // If we have a CFI but it did not match, do not fall back to page numbers
+    if (currentCfi != null && currentCfi.isNotEmpty) {
+      return false;
     }
 
     // Fallback to page number comparison
@@ -324,19 +385,38 @@ class ChapterDrawer {
   static Future<Map<String, int>> _getChapterPages(
     EpubController controller,
     List<EpubChapter> chapters,
+    bool isLoadingPages,
   ) async {
     final Map<String, int> chapterPages = {};
+
+    if (isLoadingPages) {
+      return chapterPages;
+    }
 
     try {
       final pageInfo = await controller.getPageInfo();
       final totalPages = pageInfo['totalPages'] ?? 1;
 
-      // Simple estimation: distribute pages evenly across chapters
       for (int i = 0; i < chapters.length; i++) {
         final chapter = chapters[i];
-        // Distribute pages more evenly
-        final estimatedPage = ((i * totalPages) / chapters.length).ceil() + 1;
-        chapterPages[chapter.href] = estimatedPage.clamp(1, totalPages);
+        // Use only href without fragment to get the start page of the chapter file
+        // This ensures we get the actual file start, not a mid-file anchor
+        final target = chapter.href.split('#').first;
+        final page = await controller.getPageFromCfi(target);
+        if (page != null) {
+          final clampedPage = page.clamp(1, totalPages);
+          chapterPages[chapter.href] = clampedPage;
+          print('CHAPTER DRAWER PAGE MAP -> title: ${chapter.title}, href: ${chapter.href}, target: $target, page: $clampedPage');
+        }
+      }
+
+      if (chapterPages.isEmpty) {
+        // Fallback: distribute pages evenly if no page data returned
+        for (int i = 0; i < chapters.length; i++) {
+          final chapter = chapters[i];
+          final estimatedPage = ((i * totalPages) / chapters.length).ceil() + 1;
+          chapterPages[chapter.href] = estimatedPage.clamp(1, totalPages);
+        }
       }
     } catch (e) {
       for (int i = 0; i < chapters.length; i++) {
@@ -344,14 +424,21 @@ class ChapterDrawer {
       }
     }
 
+    // Log chapter titles with their starting pages when the drawer loads.
+    for (final chapter in chapters) {
+      final page = chapterPages[chapter.href];
+      print('CHAPTER DRAWER OPEN -> title: ${chapter.title}, startPage: ${page ?? "?"}');
+    }
+
     return chapterPages;
   }
 }
 
 class _CoverImage extends StatelessWidget {
-  const _CoverImage({required this.coverBase64});
+  const _CoverImage({required this.coverBase64, required this.placeholderColor});
 
   final String? coverBase64;
+  final Color placeholderColor;
 
   @override
   Widget build(BuildContext context) {
@@ -363,7 +450,7 @@ class _CoverImage extends StatelessWidget {
           width: 60,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            color: Colors.grey[300],
+            color: placeholderColor,
           ),
           clipBehavior: Clip.hardEdge,
           child: Image.memory(
@@ -383,7 +470,7 @@ class _CoverImage extends StatelessWidget {
       height: 80,
       width: 60,
       decoration: BoxDecoration(
-        color: Colors.grey[400],
+        color: placeholderColor,
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.hardEdge,

@@ -33,9 +33,14 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
     super.initState();
     fontSize = widget.currentFontSize;
     selectedTheme = widget.currentTheme;
-    // Check if current theme is dark
-    isDarkMode = ReaderThemeModel.darkThemes.any((t) => t.name == selectedTheme.name);
+    // Check if current theme is dark (by instance, not name, to avoid duplicates)
+    isDarkMode = _isDarkTheme(selectedTheme);
+    print('🌓 ThemeSettingsSheet.initState -> currentTheme: ${selectedTheme.name}, isDarkMode: $isDarkMode');
     _initBrightness();
+  }
+
+  bool _isDarkTheme(ReaderThemeModel theme) {
+    return ReaderThemeModel.darkThemes.contains(theme);
   }
 
   Future<void> _initBrightness() async {
@@ -84,13 +89,17 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
       }
       widget.onThemeChanged(selectedTheme);
     });
+    print('🌓 ThemeSettingsSheet._toggleDarkMode -> isDarkMode: $isDarkMode, selectedTheme: ${selectedTheme.name}');
   }
 
   void _selectTheme(ReaderThemeModel theme) {
     setState(() {
       selectedTheme = theme;
+      // Update dark flag based on actual list membership
+      isDarkMode = _isDarkTheme(theme);
     });
     widget.onThemeChanged(theme);
+    print('🎨 ThemeSettingsSheet._selectTheme -> selectedTheme: ${theme.name}, isDarkModeNow: $isDarkMode');
   }
 
   @override
@@ -120,12 +129,12 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
                 onTap: () => Navigator.pop(context),
                 child: Container(
                   padding: EdgeInsets.all(14),
-                  decoration: BoxDecoration(color: selectedTheme.buttonBackgroundColor, shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: isDarkMode ? const Color(0xFF2C2C2E) : Color(0xffededee), shape: BoxShape.circle),
                   child: Image.asset(
                     'assets/images/x.png',
                     width: 10,
                     height: 10,
-                    color: selectedTheme.buttonColor,
+                    color: isDarkMode ? Colors.white : Colors.black,
                   ),
                 ),
               ),
@@ -138,7 +147,7 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isDarkMode ? const Color(0xFF2C2C2E) : selectedTheme.buttonBackgroundColor,
+                    color: isDarkMode ? const Color(0xFF2C2C2E) : Color(0xffededee),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
@@ -196,13 +205,13 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
                 child: Container(
                   width: 80,
                   decoration: BoxDecoration(
-                    color: isDarkMode ? const Color(0xFF2C2C2E) : selectedTheme.buttonBackgroundColor,
+                    color: isDarkMode ? const Color(0xFF2C2C2E) : Color(0xffededee),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   padding: const EdgeInsets.all(11),
                   child: Icon(
                     isDarkMode ? Icons.nightlight_round : Icons.wb_sunny_outlined,
-                    color: selectedTheme.buttonColor,
+                    color: isDarkMode ? Colors.white : Colors.black,
                     size: 20,
                   ),
                 ),
@@ -245,7 +254,7 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
               width: 12,
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: (isDarkMode ? Colors.white : selectedTheme.buttonColor),
+                  color: (isDarkMode ? Colors.white : Colors.black),
                   width: 2,
                 ),
                 shape: BoxShape.circle,
@@ -288,11 +297,7 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
               });
               _setBrightness(newValue);
             },
-            child: Icon(
-              Icons.wb_sunny_outlined,
-              size: 22,
-              color: (isDarkMode ? Colors.white : selectedTheme.buttonColor),
-            ),
+            child: Icon(Icons.wb_sunny_outlined, size: 22, color: (isDarkMode ? Colors.white : Colors.black)),
           ),
         ],
       ),
@@ -309,8 +314,14 @@ class _ThemeSettingsSheetState extends State<ThemeSettingsSheet> {
           color: theme.backgroundColor,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected ? Color(0xff98989a) : Color(0xffd2d2d2),
-            width: isSelected ? 2 : 1,
+            color: isDarkMode
+                ? isSelected
+                    ? Colors.grey.shade100
+                    : Colors.grey.shade500
+                : isSelected
+                    ? Color(0xff98989a)
+                    : Color(0xffd2d2d2),
+            width: isSelected ? 3 : 1,
           ),
         ),
         child: Center(

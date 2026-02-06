@@ -48,7 +48,7 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int currentFontSize = 12;
+  int currentFontSize = 14;
   int currentPage = 1;
   ReaderThemeModel currentTheme = ReaderThemeModel.lightThemes.first;
   final epubController = EpubController();
@@ -68,6 +68,9 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isDraggingSlider = false;
   bool _isProgressLongPressed = false;
   double _tempSliderValue = 0.0;
+  double _dragStartValue = 0.0; // normalized 0..1 based on current page when long-press begins
+  double _dragStartLocalX = 0.0;
+  double _lastProgressFactor = 0.0; // tracks previous fill fraction to avoid jump-from-zero visual
   List<EpubChapter> _chapters = [];
   String _currentChapterTitle = '';
 
@@ -169,8 +172,27 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _jumpToPage(int page) async {
-    if (page >= 1 && page <= totalPages && page != currentPage) {
-      await _updatePageInfo();
+    if (totalPages <= 1) return;
+
+    // Clamp within bounds
+    final targetPage = page.clamp(1, totalPages);
+
+    // Convert to progress percentage expected by the viewer
+    final progressPercent = (totalPages > 1) ? (targetPage - 1) / (totalPages - 1) : 0.0;
+
+    print('📌 _jumpToPage -> requested: $page, clamped: $targetPage, currentPage(before): $currentPage, totalPages: $totalPages, progressPercent: $progressPercent');
+
+    // Optimistically update UI
+    setState(() {
+      currentPage = targetPage;
+    });
+
+    try {
+      await epubController.toProgressPercentage(progressPercent);
+      // Do not force _updatePageInfo() here; wait for the ensuing onRelocated/onLocationLoaded
+      // to report the correct page to avoid flashing old values.
+    } catch (e) {
+      print('❌ Error jumping to page $targetPage: $e');
     }
   }
 
@@ -532,17 +554,17 @@ class _MyHomePageState extends State<MyHomePage> {
             Positioned(
               left: 0,
               right: 0,
-              bottom: 80,
+              bottom: 90,
               child: Center(
                 child: Container(
                   width: MediaQuery.of(context).size.width * 0.65,
                   padding: EdgeInsets.symmetric(vertical: 8),
                   decoration: BoxDecoration(
-                    color: Color(0xffd4d4d5),
+                    color: currentTheme.backgroundColor.withOpacity(0.92),
                     borderRadius: BorderRadius.circular(18),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.3),
+                        color: currentTheme.textColor.withOpacity(0.22),
                         blurRadius: 20,
                         offset: Offset(0, 4),
                       ),
@@ -613,15 +635,29 @@ class _MyHomePageState extends State<MyHomePage> {
                           opacity: _isProgressLongPressed ? 0.0 : 1.0,
                           duration: const Duration(milliseconds: 200),
                           child: GestureDetector(
-                            onTap: () => ChapterDrawer.show(
-                              context,
-                              epubController,
-                              bookTitle: _titleText,
-                              currentPage: currentPage,
-                              totalPages: totalPages,
-                              currentCfi: _currentCfi,
-                              currentHref: _currentHref,
-                            ),
+                            onTap: () async {
+                              try {
+                                final location = await epubController.getCurrentLocation();
+                                if (!mounted) return;
+                                setState(() {
+                                  _currentCfi = location.startCfi;
+                                  _currentHref = location.href;
+                                });
+                              } catch (e) {
+                                print('CHAPTER DRAWER -> getCurrentLocation failed: $e');
+                              }
+                              ChapterDrawer.show(
+                                context,
+                                epubController,
+                                bookTitle: _titleText,
+                                currentPage: currentPage,
+                                totalPages: totalPages,
+                                currentCfi: _currentCfi,
+                                currentHref: _currentHref,
+                                isLoadingPages: isLoadingPages,
+                                theme: currentTheme,
+                              );
+                            },
                             child: Container(
                               padding: EdgeInsets.all(13),
                               decoration: BoxDecoration(color: currentTheme.buttonBackgroundColor, shape: BoxShape.circle),
@@ -727,26 +763,32 @@ class _MyHomePageState extends State<MyHomePage> {
       child: GestureDetector(
         onLongPressStart: (details) {
           final RenderBox box = context.findRenderObject() as RenderBox;
-          final localX = details.localPosition.dx;
-          final percentage = (localX / box.size.width).clamp(0.0, 1.0);
-
+          _dragStartLocalX = details.localPosition.dx;
+          // Start from current page position to avoid jumpy visual on press
+          final currentNormalized = totalPages > 1 ? (currentPage - 1) / (totalPages - 1) : 0.0;
+          print('🎯 Slider start -> currentPage: $currentPage, totalPages: $totalPages, currentNormalized: $currentNormalized');
           setState(() {
             _isProgressLongPressed = true;
             _isDraggingSlider = true;
-            _tempSliderValue = percentage;
+            _dragStartValue = currentNormalized.clamp(0.0, 1.0);
+            _tempSliderValue = _dragStartValue;
           });
         },
         onLongPressMoveUpdate: (details) {
           final RenderBox box = context.findRenderObject() as RenderBox;
           final localX = details.localPosition.dx;
-          final percentage = (localX / box.size.width).clamp(0.0, 1.0);
+          final delta = (localX - _dragStartLocalX) / box.size.width;
+          final percentage = (_dragStartValue + delta).clamp(0.0, 1.0);
 
           setState(() {
             _tempSliderValue = percentage;
           });
+          final hoverPage = (_tempSliderValue * totalPages).round().clamp(1, totalPages);
+          print('🎯 Slider move -> delta: ${delta.toStringAsFixed(3)}, percent: ${percentage.toStringAsFixed(3)}, hoverPage: $hoverPage');
         },
         onLongPressEnd: (details) {
           final targetPage = (_tempSliderValue * totalPages).round().clamp(1, totalPages);
+          print('🎯 Slider end -> targetPage: $targetPage, from tempSliderValue: $_tempSliderValue, totalPages: $totalPages');
           if (targetPage != currentPage) {
             _jumpToPage(targetPage);
           }
@@ -771,26 +813,38 @@ class _MyHomePageState extends State<MyHomePage> {
                 // Full width background progress bar
                 if (!isLoadingPages)
                   Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(50),
-                      child: Row(
-                        children: [
-                          // Filled portion
-                          Expanded(
-                            flex: totalPages > 0 ? displayPage : 1,
-                            child: Container(
-                              color: currentTheme.buttonColor.withOpacity(0.15),
-                            ),
-                          ),
-                          // Unfilled portion
-                          Expanded(
-                            flex: totalPages > 0 ? (totalPages - displayPage).clamp(1, totalPages) : 1,
-                            child: Container(
-                              color: Colors.transparent,
-                            ),
-                          ),
-                        ],
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 200),
+                      tween: Tween<double>(
+                        begin: _lastProgressFactor,
+                        end: totalPages > 0 ? (displayPage / totalPages).clamp(0.0, 1.0) : 0.0,
                       ),
+                      onEnd: () {
+                        // Ensure we remember the last rendered factor
+                        final target = totalPages > 0 ? (displayPage / totalPages).clamp(0.0, 1.0) : 0.0;
+                        _lastProgressFactor = target;
+                      },
+                      builder: (context, value, child) {
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(50),
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Container(
+                                  color: Colors.transparent,
+                                ),
+                              ),
+                              FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: value,
+                                child: Container(
+                                  color: currentTheme.buttonColor.withOpacity(0.15),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
 
